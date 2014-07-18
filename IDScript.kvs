@@ -1,0 +1,127 @@
+alias(sec2readable)
+{
+        if (!$0 || !$isnumeric($0)) {
+                return 00:00;
+        }
+ 
+        %time = $0;
+        %mins = $(%time / 60);
+        %time = $(%time % 60);
+        %secs = %time;
+ 
+        if (%secs < 10) {
+                %secs = $str.append("0", %secs);
+        }
+ 
+        return %mins\:%secs;
+}
+ 
+alias(dots)
+{
+        %orig = $0;
+ 
+        while ($($length(%orig) % 3) != 0) {
+                %orig = $str.prepend(%orig, " ");
+        }
+ 
+        %sections = $($length(%orig) / 3);
+        %comma = ".";
+ 
+        while (%sections != 0) {
+                if (%sections == 1) {
+                        %comma = "";
+                }
+                %right = $str.right(%orig, $(3 * %sections));
+                %left = $str.left(%right, 3)%comma;
+                %ret = $str.append(%ret, %left);
+                %sections--;
+        }
+ 
+        return $str.strip(%ret);
+}
+ 
+alias(unescape)
+{
+        %ret = $str.replace($0, "&lt;", "<");
+        %ret = $str.replace($0, "&gt;", ">");
+        %ret = $str.replace($0, "&quot;", "\"");
+        %ret = $str.replace($0, "&amp;", "&");
+ 
+        return %ret;
+}
+alias(queueadd)
+{
+if(!$isset(%QueueIndex)) {
+        %QueueIndex = 0;
+        %QueueChan[%QueueIndex] = $0;
+        %QueueMsg[%QueueIndex] = $1-;
+       
+} else {
+        %QueueIndex = $(%QueueIndex + 1);
+        %QueueChan[%QueueIndex] = $0;
+        %QueueMsg[%QueueIndex] = $1-;
+}
+if (!$istimer(queue)) {
+        timer(queue,2000) { queuenext; }
+}
+}
+alias(queuenext)
+{
+if(!$isset(%SayIndex)) {
+        %SayIndex = 0;
+}
+if(%SayIndex < %QueueIndex) {
+        msg %QueueChan[%SayIndex] %QueueMsg[%SayIndex];
+        %SayIndex = $(%SayIndex + 1);
+} else {
+        msg %QueueChan[%SayIndex] %QueueMsg[%SayIndex];
+        unset %QueueIndex;
+        unset %SayIndex;
+        if ($istimer(queue)) {
+                killtimer queue;
+        }
+}
+}
+ 
+event(OnChannelMessage,youtube)
+{
+%requrl = "http://gdata.youtube.com/feeds/api/videos/";
+%Currchan = $target;
+if (!$str.contains($3, "youtube.com\/watch")) {
+        return;
+}
+%id = $str.grep("v=([a-zA-Z0-9\-\_]{11})", $3, "rp")[1];
+if (!%id) {
+        return;
+}
+http.asyncGet -w=h -a -i=$channel (%requrl%id) {
+        %brand = $b()$k YouTube$o();
+ 
+        %contents = $file.read($2);
+ 
+        %title = $str.grep("<media:title type='plain'>(.*)</media:title>", %contents, "rp")[1];
+        %views = $dots($str.grep("viewCount='(.*)'", %contents, "rp")[1]);
+        %rating = $str.replace($str.grep("<gd:rating average='(.\\..)", %contents, "rp")[1], ".", ",");
+        %votes = $str.grep("numRaters='(\\d*)'", %contents, "rp")[1];
+        %length = $sec2readable($str.grep("<yt:duration seconds='(\\d*)'/>", %contents, "rp")[1]);
+        %author = $str.grep("<author><name>(.*)</name>", %contents, "rp")[1];
+        %ts = $str.grep("<published>(\\d\\d\\d\\d)-(\\d\\d)-(\\d\\d)T(\\d\\d:\\d\\d:\\d\\d).000Z</published>", %contents, "rp");
+        %date = $str.replace(%ts[3]"-"%ts[2]"-"%ts[1], "-", "/");
+        %time = %ts[4];
+        %link = $str.grep("http://www.youtube.com/watch\\?v=(...........)", %contents, "rp")[1];
+        if (%votes) {
+                if (%votes == 1) {
+                        %votestext = rated $b%rating$b\/$b()5,0$b ($b%votes$b vote);
+                } else {
+                        %votestext = rated $b%rating$b\/$b()5,0$b ($b%votes$b votes);
+                }
+        } else {
+                %votestext = not rated yet;
+        }
+ 
+        if (%title) {
+                queueadd %Currchan %brand - $b$unescape(%title)$b $b\(%length\)$b - $b%views$b views - %votestext - uploaded by $b%author$b on $b%date$b $b%time$b;
+        }
+        file.remove $2;
+}
+}
